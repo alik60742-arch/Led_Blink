@@ -3,181 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure MQTT over WebSockets (WSS) Client</title>
-    <!-- Include MQTT.js via CDN -->
-    <script src="https://cloudflare.com"></script>
+    <title>ESP32 Cloud Controller</title>
+    <!-- Include MQTT Library -->
+    <script src="https://cloudflare.com" type="text/javascript"></script>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            max-width: 600px;
-            margin: 40px auto;
-            padding: 20px;
-            background-color: #f4f6f9;
-        }
-        .card {
-            background: white;
-            padding: 25px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            font-size: 14px;
-        }
-        input {
-            width: 100%;
-            padding: 10px;
-            box-sizing: border-box;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        button {
-            width: 100%;
-            padding: 12px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            font-size: 16px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-        #status-box {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 4px;
-            font-weight: bold;
-            text-align: center;
-        }
-        .connecting { background-color: #fff3cd; color: #856404; }
-        .connected { background-color: #d4edda; color: #155724; }
-        .disconnected { background-color: #f8d7da; color: #721c24; }
-        #log {
-            margin-top: 15px;
-            background: #222;
-            color: #00ff00;
-            padding: 15px;
-            border-radius: 4px;
-            font-family: monospace;
-            height: 150px;
-            overflow-y: auto;
-            font-size: 12px;
-            white-space: pre-wrap;
-        }
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background: #f4f6f9; }
+        .btn { padding: 15px 40px; font-size: 18px; margin: 10px; cursor: pointer; border: none; border-radius: 5px; color: white; }
+        .on { background-color: #2ec4b6; }
+        .off { background-color: #e71d36; }
+        #status { font-weight: bold; margin-top: 20px; }
     </style>
 </head>
 <body>
 
-<div class="card">
-    <h2>Secure MQTT WebSocket Tester</h2>
-    <p style="color: #666; font-size: 13px; margin-top: -10px;">Fixes silent hang issues by enforcing dynamic Client IDs and capturing hidden SSL/Network errors.</p>
+    <h1>Custom ESP32 LED Remote</h1>
+    <p>Operating Pin 19 via Cloud WebSockets</p>
     
-    <div class="form-group">
-        <label for="brokerUrl">Broker WSS URL (Must include port and /mqtt path)</label>
-        <!-- Pre-filled with EMQX public testing cluster for instant confirmation -->
-        <input type="text" id="brokerUrl" value="wss://broker.emqx.io:8084/mqtt" placeholder="wss://://your-domain.com">
-    </div>
-
-    <button onclick="connectToMqtt()">Connect to MQTT Server</button>
-
-    <div id="status-box" class="disconnected">Status: Disconnected</div>
+    <button class="btn on" onclick="sendSignal('1')">Turn ON</button>
+    <button class="btn off" onclick="sendSignal('0')">Turn OFF</button>
     
-    <label style="margin-top: 20px;">Console Log Tracker:</label>
-    <div id="log">Click 'Connect' to initiate network configuration...</div>
-</div>
+    <div id="status">Connecting to MQTT Server...</div>
 
-<script>
-    let client = null;
-    const statusBox = document.getElementById('status-box');
-    const logBox = document.getElementById('log');
+    <script>
+        // Change "myUniqueTopic123" to something completely unique to you so no one else intercepts it
+        const MQTT_TOPIC = "yourname/esp32/led19"; 
+        const MQTT_HOST = "://hivemq.com";
+        const MQTT_PORT = 8000; // WebSockets port for browsers
 
-    function log(message) {
-        const timestamp = new Date().toLocaleTimeString();
-        logBox.innerText += `\n[${timestamp}] ${message}`;
-        logBox.scrollTop = logBox.scrollHeight;
-        console.log(message);
-    }
+        // Generate a random client ID to avoid collisions
+        const clientId = "web_client_" + Math.random().toString(16).substr(2, 8);
+        const client = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, clientId);
 
-    function updateStatus(state, text) {
-        statusBox.className = state;
-        statusBox.innerText = `Status: ${text}`;
-    }
-
-    function connectToMqtt() {
-        const connectionUrl = document.getElementById('brokerUrl').value.trim();
-
-        if (!connectionUrl.startsWith('wss://')) {
-            alert('Error: You are running this on a secure context or need a secure connection. URL must start with wss://');
-            return;
-        }
-
-        // Clean up previous instances if they exist to prevent socket leaks
-        if (client) {
-            log('Disconnecting existing client instance...');
-            client.end();
-        }
-
-        // FIX 1: Generate a truly unique Client ID dynamically every time
-        // This stops the broker from continuously dropping your connection due to clashes.
-        const uniqueClientId = 'web_client_' + Math.random().toString(16).substring(2, 10);
-        
-        log(`Initializing connection configuration...`);
-        log(`Assigned Client ID: ${uniqueClientId}`);
-        updateStatus('connecting', 'Connecting to MQTT Server...');
-
-        const options = {
-            clientId: uniqueClientId,
-            clean: true,
-            connectTimeout: 5000, // 5 seconds timeout before triggering error
-            // FIX 2: Explicitly pass WebSocket connection protocols
-            protocolId: 'MQTT',
-            protocolVersion: 4,
-            // Uncomment the line below ONLY if troubleshooting local self-signed dev certificates
-            // rejectUnauthorized: false 
+        client.onConnectionLost = (responseObject) => {
+            document.getElementById("status").innerText = "Disconnected. Reconnecting...";
+            setTimeout(connectClient, 3000);
         };
 
-        try {
-            // Instantiate the connection
-            client = mqtt.connect(connectionUrl, options);
-
-            // Triggered when connection successfully establishes
-            client.on('connect', () => {
-                updateStatus('connected', 'Connected Successfully!');
-                log('MQTT handshake complete. Connection open over secure WebSockets.');
+        function connectClient() {
+            client.connect({
+                onSuccess: () => {
+                    document.getElementById("status").innerText = "Connected to Server! Ready.";
+                },
+                onFailure: (err) => {
+                    document.getElementById("status").innerText = "Connection Failed. Retrying...";
+                    setTimeout(connectClient, 3000);
+                },
+                useSSL: false // Set to true if deploying over HTTPS on GitHub and using port 8001/443 if supported by host
             });
-
-            // FIX 3: Capture the explicit error event (helps find bad certificates)
-            client.on('error', (err) => {
-                updateStatus('disconnected', 'Connection Error');
-                log(`🔴 ERROR: ${err.message || 'Check browser F12 Console Network Tab for SSL cert blocks.'}`);
-            });
-
-            // Triggered if the broker intentionally rejects the client credentials/structure
-            client.on('reconnect', () => {
-                log('Attempting reconnection cycle...');
-                updateStatus('connecting', 'Reconnecting...');
-            });
-
-            // Triggered when the server drops or network fails
-            client.on('close', () => {
-                updateStatus('disconnected', 'Connection Closed');
-                log('Socket connection closed by remote peer or local network disruption.');
-            });
-
-        } catch (error) {
-            updateStatus('disconnected', 'Initialization Failed');
-            log(`Exception caught: ${error.message}`);
         }
-    }
-</script>
 
+        function sendSignal(value) {
+            if (client.isConnected()) {
+                const message = new Paho.MQTT.Message(value);
+                message.destinationName = MQTT_TOPIC;
+                client.send(message);
+                console.log("Sent: " + value);
+            } else {
+                alert("Not connected to broker yet.");
+            }
+        }
+
+        // Start connection
+        connectClient();
+    </script>
 </body>
 </html>
